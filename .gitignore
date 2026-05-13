@@ -1,19 +1,21 @@
-# STM32CubeIDE build output
+# Build folders
 Debug/
 Release/
+
+# Compiled files
+*.o
+*.d
+*.su
 *.elf
 *.bin
 *.hex
 *.map
 *.lst
 
-# IDE specific files
+# STM32CubeIDE
 .metadata/
 .settings/
 *.launch
-
-# CubeMX generated (optional - some people commit this, some don't)
-*.ioc
 
 # OS files
 .DS_Store
