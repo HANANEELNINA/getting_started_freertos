@@ -23,6 +23,8 @@
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS.h"
 #include "task.h"
+#include "queue.h"
+
 
 /* USER CODE END Includes */
 
@@ -41,7 +43,20 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+RTC_HandleTypeDef hrtc;
+
 UART_HandleTypeDef huart1;
+
+TaskHandle_t menu_task_h = NULL;
+TaskHandle_t cmd_task_h = NULL;
+TaskHandle_t print_task_h = NULL;
+TaskHandle_t led_task_h = NULL;
+TaskHandle_t rtc_task_h = NULL;
+
+xQueueHandle q_data, q_print;
+UBaseType_t Task_Returned;
+
+volatile uint8_t user_data;
 
 /* USER CODE BEGIN PV */
 int __io_putchar(int ch){
@@ -51,28 +66,51 @@ int __io_putchar(int ch){
 };
 
 
-void task1 (void * pvT1_params ){
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+
+	 void * const pvBuffe;
+
+	// check: if queue is not full
+	/* xQueueIsQueueFullFromISR :: Queries a queue to determine if the queue is full.
+	 * This function should only be used in an ISR.*/
+	if(xQueueIsQueueFullFromISR(q_data) =! pdTRUE )
+	{
+			/*Queue is not full , Enqueue data byte */
+
+		xQueueSendFromISR(q_data, &user_data , pdFALSE);
 
 
-	for(;;){
-	  printf("Hello from TASK_1\n");
-	  vTaskDelay(pdMS_TO_TICKS(100));
-	  taskYIELD();
+	}else
+	{
+			/*Queue is full */
+
+		if(user_data == '\n')
+		{
+			/* make sure that last data byte of the queue is '\n' */
+			xQueueReceiveFromISR(q_data, pvBuffer , pdFALSE );
+			xQueueSendFromISR(q_data, user_data , pdFALSE );
+
+		}
 	}
+
+		/*send notification to command handling task if user_data = '\n' */
+	if(user_data == '\n')
+	{
+		xTaskNotifyFromISR( cmd_task_h,0 ,eNoAction,pfFALSE );
+	}
+
+
+		/* TODO: Enable UART data byte reception again in IT mode */
+	  HAL_UART_Receive_IT(&huart1, &user_data, 1);
+
 
 }
 
-void task2 (void * pvT2_params ){
 
 
-	for(;;){
-	  printf("Hello from TASK_2\n");
 
-	  vTaskDelay(pdMS_TO_TICKS(100));
-	  taskYIELD();
-	}
-
-}
 
 /* USER CODE END PV */
 
@@ -80,6 +118,7 @@ void task2 (void * pvT2_params ){
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -106,10 +145,8 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
-  	TaskHandle_t handleT1 = NULL;
-    TaskHandle_t handleT2 = NULL;
-    TaskHandle_t handleT3 = NULL;
-    UBaseType_t T1_Returned, T2_Returned, T3_Returned ;
+
+
 
   /* USER CODE END Init */
 
@@ -123,30 +160,68 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
 
-  T1_Returned = xTaskCreate(
-    		  task1,
+  Task_Returned = xTaskCreate(
+    		  menu_task,
     		  "T1",
-    		  400 ,
+    		  250 ,
     		  (void*)1,
     		  1,
-    		  &handleT1);
+    		  &menu_task_h);
+  configASSERT(Task_Returned == pdPASS);
 
-    T2_Returned = xTaskCreate(
-     		  task2,
+  Task_Returned = xTaskCreate(
+     		  cmd_task,
      		  "T2",
-     		  400 ,
+     		  250 ,
      		  (void*)1,
      		  1,
-     		  &handleT2);
+     		  &cmd_task_h);
+  configASSERT(Task_Returned == pdPASS);
+
+  Task_Returned = xTaskCreate(
+         		  print_task,
+         		  "T3",
+         		  250 ,
+         		  (void*)1,
+         		  1,
+         		  &print_task_h);
+  configASSERT(Task_Returned == pdPASS);
+
+  Task_Returned = xTaskCreate(
+         		  led_task,
+         		  "T4",
+         		  250 ,
+         		  (void*)1,
+         		  1,
+         		  &led_task_h);
+  configASSERT(Task_Returned == pdPASS);
+
+  Task_Returned = xTaskCreate(
+         		  rtc_task,
+         		  "T5",
+         		  250 ,
+         		  (void*)1,
+         		  1,
+         		  &rtc_task_h);
+  configASSERT(Task_Returned == pdPASS);
+
+  q_data = xQueueCreate(10, sizeof(char));
+  configASSERT(q_data != NULL);
+
+  q_print = xQueueCreate(10, sizeof(size_t)); // pointer size
+  configASSERT(q_print != NULL);
 
 
 
-  // if(T1_Returned ) printf("Task_1 is successfully created\n");
- //  if(T2_Returned ) printf("Task_2 is successfully created\n");
 
-   vTaskStartScheduler();
+  /**Enabling Data Receiving via uart in IT mode ***/
+  HAL_UART_Receive_IT(&huart1, &user_data, 1);
+
+
+  vTaskStartScheduler();
 
   /* USER CODE END 2 */
 
@@ -170,13 +245,15 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -196,6 +273,43 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.AsynchPrediv = RTC_AUTO_1_SECOND;
+  hrtc.Init.OutPut = RTC_OUTPUTSOURCE_ALARM;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
+
 }
 
 /**

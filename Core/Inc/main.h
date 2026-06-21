@@ -54,6 +54,40 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+extern xQueueHandle q_data, q_print;
+extern TaskHandle_t menu_task_h = NULL;
+extern TaskHandle_t cmd_task_h = NULL;
+extern TaskHandle_t print_task_h = NULL;
+extern TaskHandle_t led_task_h = NULL;
+extern TaskHandle_t rtc_task_h = NULL;
+
+void menu_task (void * pvT1_params );
+
+void cmd_task (void * pvT2_params );
+
+void print_task (void * pvT3_params );
+
+void led_task (void * pvT4_params );
+
+void rtc_task (void * pvT5_params );
+
+
+typedef struct {
+	uint8_t payload[10];
+	uint8_t len;
+
+}command_t;
+
+typedef enum{
+	sMainMenu = 0,
+	sLedEffect,
+	sRtcMenu,
+	sRtcDateConfig,
+	sRtcDateConfig,
+	sRtcReport,
+
+}state_t;
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
